@@ -12,6 +12,8 @@
     "astro": "astro"
   },
   "dependencies": {
-    "astro": "^6.0.2"
+    "@rollup/rollup-win32-x64-msvc": "^4.59.0",
+    "astro": "^6.0.2",
+    "maplibre-gl": "^5.20.0"
   }
 }
