@@ -8,6 +8,9 @@
     </div>
 </div>
 
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" />
+<link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
+
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
 
@@ -62,25 +65,241 @@
     :global(.maplibregl-ctrl-icon) {
         filter: invert(1);
     }
-</style>
 
-<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" />
+    :global(.maplibregl-popup-content) {
+        background: rgba(15, 15, 15, 0.8) !important;
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px !important;
+        padding: 1.25rem !important;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+        color: white;
+        min-width: 360px;
+    }
+
+    :global(.maplibregl-popup-tip) {
+        border-top-color: rgba(15, 15, 15, 0.8) !important;
+        border-bottom-color: rgba(15, 15, 15, 0.8) !important;
+    }
+
+    :global(.camera-popup h3) {
+        margin: 0 0 1rem 0;
+        font-size: 1rem;
+        font-weight: 600;
+        color: #38bdf8;
+    }
+
+    :global(.video-container) {
+        width: 100%;
+        background: #000;
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        position: relative;
+    }
+
+    :global(.twitch-wrapper) {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+    }
+
+    :global(.twitch-wrapper iframe) {
+        position: absolute;
+        top: -65px;
+        left: 0;
+        width: 100%;
+        height: calc(100% + 130px);
+        pointer-events: none;
+    }
+
+    :global(.plyr__video-embed) {
+        width: 100%;
+        height: 100%;
+    }
+
+    :global(.plyr__video-embed iframe) {
+        pointer-events: none;
+    }
+
+    :global(.plyr__cite),
+    :global(.plyr__video-embed__container .plyr__video-embed__youtube-link) {
+        display: none !important;
+    }
+
+    :global(.plyr__controls) {
+        z-index: 10;
+        pointer-events: auto;
+    }
+
+    :global(.plyr) {
+        --plyr-color-main: #38bdf8;
+        border-radius: 8px;
+    }
+
+    :global(.plyr--video) {
+        background: #000;
+    }
+
+    :global(.video-overlay) {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(0deg, rgba(0,0,0,0.2) 0%, transparent 20%, transparent 80%, rgba(0,0,0,0.2) 100%);
+        pointer-events: none;
+        z-index: 10;
+        padding: 12px;
+    }
+
+    @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+    }
+</style>
 
 <script>
     import maplibregl from 'maplibre-gl';
+    import Hls from 'hls.js';
+    import Plyr from 'plyr';
 
     const style = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 
     const map = new maplibregl.Map({
         container: 'map',
         style: style, 
-        center: [-1, 10],
+        center: [-1, -5],
         zoom: 2,
     });
 
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
 
     map.on('load', () => {
-        console.log('Mapa oscuro cargado sin líneas de referencia.');
+        map.addSource('cameras', {
+            type: 'geojson',
+            data: '/api/get-cameras.json' 
+        });
+
+        map.addLayer({
+            id: 'puntos-glow',
+            type: 'circle',
+            source: 'cameras',
+            paint: {
+                'circle-radius': 4,
+                'circle-color': '#f5f838',
+                'circle-blur': 0.2,
+                'circle-opacity': 0.8,
+                'circle-stroke-width': 2,
+                'circle-stroke-color': '#fff'
+            }
+        });
+
+        map.on('mouseenter', 'puntos-glow', () => {
+            map.getCanvas().style.cursor = 'pointer';
+        });
+
+        map.on('mouseleave', 'puntos-glow', () => {
+            map.getCanvas().style.cursor = '';
+        });
+
+        function getYouTubeID(url: string) {
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : null;
+        }
+
+        function getTwitchChannel(url: string) {
+            const match = url.match(/(?:twitch\.tv\/|channel=)([^&\?]+)/);
+            return match ? match[1] : null;
+        }
+
+        map.on('click', 'puntos-glow', (e) => {
+            const features = e.features;
+            if (!features || features.length === 0) return;
+            
+            const feature = features[0];
+            const { name, url } = feature.properties;
+            const geometry = feature.geometry as any;
+            const coordinates = geometry.coordinates.slice();
+
+            while (Math.abs(e.lngLat.lng - coordinates[0]) > 180) {
+                coordinates[0] += e.lngLat.lng > coordinates[0] ? 360 : -360;
+            }
+
+            const ytID = getYouTubeID(url);
+            const twitchChannel = getTwitchChannel(url);
+            const content = document.createElement('div');
+            content.className = 'camera-popup';
+            
+            let playerHTML = '';
+            if (ytID) {
+                playerHTML = `
+                    <div class="plyr__video-embed" id="player">
+                        <iframe
+                            src="https://www.youtube.com/embed/${ytID}?origin=${window.location.origin}&iv_load_policy=3&modestbranding=1&playsinline=1&showinfo=0&rel=0&enablejsapi=1"
+                            allowfullscreen
+                            allowtransparency
+                            allow="autoplay"
+                        ></iframe>
+                    </div>
+                `;
+            } else if (twitchChannel) {
+                const parent = window.location.hostname === 'localhost' ? 'localhost' : window.location.hostname;
+                playerHTML = `
+                    <div class="twitch-wrapper">
+                        <iframe
+                            src="https://player.twitch.tv/?channel=${twitchChannel}&parent=${parent}&autoplay=true&muted=true&controls=false"
+                            allowfullscreen
+                            allow="autoplay"
+                        ></iframe>
+                    </div>
+                `;
+            } else {
+                playerHTML = `
+                    <video id="player" playsinline controls>
+                        <source src="${url}" type="application/x-mpegURL" />
+                    </video>
+                `;
+            }
+
+            content.innerHTML = `
+                <h3>${name}</h3>
+                <div class="video-container">
+                    ${playerHTML}
+                </div>
+            `;
+
+            new maplibregl.Popup({ offset: 15, closeButton: false })
+                .setLngLat(coordinates)
+                .setDOMContent(content)
+                .addTo(map);
+
+            const playerElement = content.querySelector('#player');
+            
+            if (playerElement) {
+                if (ytID) {
+                    new Plyr(playerElement as HTMLElement, {
+                        autoplay: true,
+                        muted: true,
+                        youtube: { noCookie: true, rel: 0, showinfo: 0, iv_load_policy: 3, modestbranding: 1 },
+                        controls: ['play-large', 'play', 'mute', 'volume', 'fullscreen'],
+                    });
+                } else if (!twitchChannel) {
+                    const video = playerElement as HTMLVideoElement;
+                    if (Hls.isSupported()) {
+                        const hls = new Hls();
+                        hls.loadSource(url);
+                        hls.attachMedia(video);
+                    }
+                    new Plyr(video, {
+                        autoplay: true,
+                        muted: true,
+                        controls: ['play-large', 'play', 'mute', 'volume', 'fullscreen'],
+                    });
+                }
+            }
+        });
     });
 </script>
