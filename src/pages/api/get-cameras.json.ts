@@ -37,7 +37,8 @@ export async function GET() {
       status: 200,
       headers: { 
         "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*" 
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-cache, no-store, must-revalidate"
       }
     });
   } catch (error) {
